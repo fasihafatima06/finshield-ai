@@ -1087,12 +1087,12 @@ function SettingsWorkspace({
     <div className="settings-layout">
       <section className="panel settings-panel">
         <div className="panel-heading"><div><h2>AI providers</h2><p>Exactly two provider keys, loaded privately by the server.</p></div><div className="provider-badge"><span className={providerStatus?.activeProvider === 'unavailable' ? 'provider-dot provider-demo' : 'provider-dot'} />{providerStatus?.activeProvider === 'unavailable' ? 'CONFIGURATION REQUIRED' : 'LIVE AI REQUIRED'}</div></div>
-        <div className="provider-active"><div className="provider-active-icon"><AudioLines size={18} /></div><div><span>Selected provider (connection must be tested)</span><strong>{providerStatus ? (providerStatus.activeProvider === 'unavailable' ? 'No live provider configured' : providerStatus.activeProvider === 'gemini' ? 'Google Gemini' : 'NVIDIA Nemotron 3 Ultra') : 'Loading provider status…'}</strong></div></div>
+        <div className="provider-active"><div className="provider-active-icon"><AudioLines size={18} /></div><div><span>Selected provider (connection must be tested)</span><strong>{providerStatus ? (providerStatus.activeProvider === 'unavailable' ? 'No live provider configured' : providerStatus.activeProvider === 'gemini' ? 'Google Gemini' : 'Nemotron via OpenRouter') : 'Loading provider status…'}</strong></div></div>
         <div className="provider-list">
           <ProviderRow name="Google Gemini" identifier="GEMINI_API_KEY" model="gemini-3.1-pro-preview" configured={providerStatus?.hasGemini || false} loading={isTestingProvider} onTest={() => onTestProvider('gemini')} />
-          <ProviderRow name="NVIDIA Nemotron 3 Ultra" identifier="NEMOTRON_API_KEY" model="nvidia/nemotron-3-ultra-550b-a55b" configured={providerStatus?.hasNemotron || false} loading={isTestingProvider} onTest={() => onTestProvider('nemotron')} />
+          <ProviderRow name="Nemotron 3 Ultra via OpenRouter" identifier="NEMOTRON_API_KEY" model="nvidia/nemotron-3-ultra-550b-a55b" configured={providerStatus?.hasNemotron || false} loading={isTestingProvider} onTest={() => onTestProvider('nemotron')} />
         </div>
-        <div className="inline-notice"><LockKeyhole size={14} /> Configure only the Gemini and Nemotron keys in <code>.env.local</code>, then restart the server. Key presence does not confirm valid credentials or quota; use Test connection. Never use a <code>NEXT_PUBLIC_</code> prefix for secrets.</div>
+        <div className="inline-notice"><LockKeyhole size={14} /> Configure the OpenRouter key in <code>NEMOTRON_API_KEY</code> in <code>.env.local</code>, then restart the server. Key presence does not confirm valid credentials or quota; use Test connection. Never use a <code>NEXT_PUBLIC_</code> prefix for secrets.</div>
       </section>
       <section className="panel settings-panel">
         <div className="panel-heading"><div><h2>Policy configuration</h2><p>Toggle demo rules. Each update applies to subsequent evaluations.</p></div><span className="queue-count">{policies.length}</span></div>

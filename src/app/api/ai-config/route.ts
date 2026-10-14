@@ -21,10 +21,10 @@ export async function GET() {
           },
           {
             id: 'nemotron',
-            name: 'NVIDIA Nemotron 3 Ultra',
-            description: 'Server-configured NVIDIA provider',
+            name: 'Nemotron 3 Ultra via OpenRouter',
+            description: 'Server-configured OpenRouter provider',
             isConfigured: config.hasNemotron,
-            docsUrl: 'https://build.nvidia.com/',
+            docsUrl: 'https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free',
           },
         ],
       },

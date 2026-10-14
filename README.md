@@ -11,17 +11,17 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). With `AI_PROVIDER=auto` (the default), Gemini is selected first when its key is configured, then NVIDIA. If neither live provider completes analysis, the task fails closed; there is no offline AI fallback. A transient provider response is retried once before the next configured provider is attempted. Choose **Load sample data** on Overview to seed synthetic tasks and policies. Allocate Task accepts up to 8 text-based PDF (50 pages maximum), CSV, or TXT files (10 MB each); every file becomes a separate task, is parsed on the server, and gets a downloadable CSV conversion. Scanned PDFs, image files, and XLSX workbooks are not supported. No real funds are transferred.
+Open [http://localhost:3000](http://localhost:3000). Nemotron via OpenRouter is the default provider (`AI_PROVIDER=nemotron`). `AI_PROVIDER=auto` tries Nemotron first, then Gemini if configured and Nemotron fails. If no live provider completes analysis, the task fails closed; there is no offline AI fallback. A transient provider response is retried once before the next configured provider is attempted. Choose **Load sample data** on Overview to seed synthetic tasks and policies. Allocate Task accepts up to 8 text-based PDF (50 pages maximum), CSV, or TXT files (10 MB each); every file becomes a separate task, is parsed on the server, and gets a downloadable CSV conversion. Scanned PDFs, image files, and XLSX workbooks are not supported. No real funds are transferred.
 
 ## AI provider keys
 
-The project root has a local `.env.local` file, ignored by Git. The app needs only two AI credentials: `GEMINI_API_KEY` and `NEMOTRON_API_KEY`. No Supabase key is needed because the app does not connect to Supabase. Never put credential values in this README or another tracked file.
+Copy `.env.example` to `.env.local` in the project root; `.env.local` is ignored by Git. Add your OpenRouter key to `NEMOTRON_API_KEY`. No Gemini or Supabase key is needed for the default Nemotron setup. Never put credential values in this README or another tracked file.
 
-The task-analysis pipeline uses Gemini (`gemini-3.1-pro-preview`) when selected, then NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) when selected. Never put secrets in `NEXT_PUBLIC_*`, Git-tracked files, or chat. `.env.example` contains placeholders only.
+The task-analysis pipeline uses Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) through OpenRouter by default. Never put secrets in `NEXT_PUBLIC_*`, Git-tracked files, or chat. `.env.example` contains placeholders only.
 
 To demonstrate the full workflow without uploading a file, open **Allocate Task**, select **Use sample**, then **Submit for evaluation**. This prefills a synthetic $12,450 invoice. With the high-amount verification policy active, it should produce **Verify** for human review. The task is automatically opened in **FinShield AI**; click its task ID later to revisit the saved Agent 1 extraction, Agent 2 findings and checks, and Agent 3 policy checks and decision rationale.
 
-The provider adapters use configured model IDs and endpoints in `src/lib/engine/ai-providers.ts`; verify those values against the model access and official API instructions for your account before enabling live provider calls. The Settings screen can test a configured server-side key with a synthetic sample. Live calls send the task-analysis prompt to that third-party provider.
+The provider adapters use configured model IDs and endpoints in `src/lib/engine/ai-providers.ts`; verify model access and quota in OpenRouter before enabling live provider calls. The Settings screen can test a configured server-side key with a synthetic sample. Live calls send the task-analysis prompt to that third-party provider.
 
 ## What works in this prototype
 

@@ -6,7 +6,7 @@
  * 
  * Supported providers:
  * 1. Google Gemini (via Google Generative AI REST API)
- * 2. NVIDIA Nemotron (via NVIDIA NIM Catalog API)
+ * 2. NVIDIA Nemotron 3 Ultra (via OpenRouter)
  */
 
 import type { FindingCategory, FindingSeverity, Decision } from '@/lib/types';
@@ -125,7 +125,7 @@ export function getActiveAIProvider(): {
   const hasGemini = Boolean(geminiKey && geminiKey.length > 5);
   const hasNemotron = Boolean(nemotronKey && nemotronKey.length > 5);
 
-  const configuredPreference = process.env.AI_PROVIDER?.trim().toLowerCase() || 'auto';
+  const configuredPreference = process.env.AI_PROVIDER?.trim().toLowerCase() || 'nemotron';
   // Legacy "demo" settings now select live-provider auto mode; they never enable offline decisions.
   const preference = configuredPreference === 'demo' ? 'auto' : configuredPreference;
   let activeProvider: 'gemini' | 'nemotron' | 'unavailable' = 'unavailable';
@@ -134,8 +134,8 @@ export function getActiveAIProvider(): {
   } else if (preference === 'nemotron' && hasNemotron) {
     activeProvider = 'nemotron';
   } else if (preference === 'auto') {
-    if (hasGemini) activeProvider = 'gemini';
-    else if (hasNemotron) activeProvider = 'nemotron';
+    if (hasNemotron) activeProvider = 'nemotron';
+    else if (hasGemini) activeProvider = 'gemini';
   }
 
   return {
@@ -150,7 +150,7 @@ type LiveProvider = 'gemini' | 'nemotron';
 
 function getProviderOrder(): LiveProvider[] {
   const { hasGemini, hasNemotron } = getActiveAIProvider();
-  const configuredPreference = process.env.AI_PROVIDER?.trim().toLowerCase() || 'auto';
+  const configuredPreference = process.env.AI_PROVIDER?.trim().toLowerCase() || 'nemotron';
   const preference = configuredPreference === 'demo' ? 'auto' : configuredPreference;
   if (preference === 'gemini') return hasGemini ? ['gemini'] : [];
   if (preference === 'nemotron') return hasNemotron ? ['nemotron'] : [];
@@ -158,8 +158,8 @@ function getProviderOrder(): LiveProvider[] {
     throw new Error(`Unsupported AI_PROVIDER "${preference}". Use auto, gemini, or nemotron.`);
   }
   return [
-    ...(hasGemini ? ['gemini' as const] : []),
     ...(hasNemotron ? ['nemotron' as const] : []),
+    ...(hasGemini ? ['gemini' as const] : []),
   ];
 }
 
@@ -168,7 +168,7 @@ async function runWithLiveProvider(
 ): Promise<AIAnalysisResult> {
   const providers = getProviderOrder();
   if (!providers.length) {
-    throw new Error('No live AI provider is available. Configure a valid Gemini or Nemotron key and set AI_PROVIDER to auto, gemini, or nemotron.');
+    throw new Error('No live AI provider is available. Configure NEMOTRON_API_KEY or GEMINI_API_KEY and set AI_PROVIDER to nemotron, gemini, or auto.');
   }
 
   const failures: string[] = [];
@@ -322,7 +322,7 @@ ${params.documentText}
 }
 
 /**
- * Call NVIDIA Nemotron API
+ * Call Nemotron through OpenRouter's OpenAI-compatible API.
  */
 export async function analyzeWithNemotron(
   params: AIAnalysisParams,
@@ -377,11 +377,13 @@ Respond ONLY with a valid JSON object matching:
 ${params.documentText}
 """`;
 
-  const response = await fetchProvider('https://integrate.api.nvidia.com/v1/chat/completions', {
+  const response = await fetchProvider('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL?.trim() || 'http://localhost:3000',
+      'X-Title': 'FinShield AI',
     },
     body: JSON.stringify({
       model,
@@ -389,23 +391,24 @@ ${params.documentText}
       { role: 'system', content: `${systemPrompt}${decisionInstructions}` },
         { role: 'user', content: userContent },
       ],
-      temperature: 1.0,
+      temperature: 0.1,
       top_p: 0.95,
       max_tokens: 4000,
-      chat_template_kwargs: { enable_thinking: false },
+      reasoning: { effort: 'low' },
+      response_format: { type: 'json_object' },
     }),
     signal: AbortSignal.timeout(getAIRequestTimeoutMs()),
   });
 
   if (!response.ok) {
     const errorText = (await response.text()).slice(0, 500);
-    throw new Error(`NVIDIA Nemotron API error (${response.status}): ${errorText}`);
+    throw new Error(`OpenRouter Nemotron API error (${response.status}): ${errorText}`);
   }
 
   const json = await response.json();
   const textOutput = json.choices?.[0]?.message?.content;
   if (!textOutput) {
-    throw new Error('Empty response from NVIDIA Nemotron API');
+    throw new Error('Empty response from OpenRouter Nemotron API');
   }
 
   const parsed = parseAIResponse(textOutput);
@@ -464,7 +467,7 @@ export async function testAIProviderKey(provider: 'gemini' | 'nemotron', keyToTe
       const result = await analyzeWithNemotron(testDoc, keyToTest);
       return {
         success: true,
-        provider: 'NVIDIA Nemotron',
+        provider: 'Nemotron via OpenRouter',
         model: result.modelId,
         message: `Connected successfully! Model responded in ${result.latencyMs}ms.`,
         latencyMs: Date.now() - startTime,
@@ -474,7 +477,7 @@ export async function testAIProviderKey(provider: 'gemini' | 'nemotron', keyToTe
   } catch (error) {
     return {
       success: false,
-      provider: provider === 'gemini' ? 'Google Gemini' : 'NVIDIA Nemotron',
+      provider: provider === 'gemini' ? 'Google Gemini' : 'Nemotron via OpenRouter',
       model: provider === 'gemini' ? GEMINI_MODEL_ID : NEMOTRON_MODEL_ID,
       message: error instanceof Error ? error.message : 'Unknown connection error',
       latencyMs: Date.now() - startTime,

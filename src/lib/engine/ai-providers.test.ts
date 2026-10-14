@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { analyzeWithGemini, getAIRequestTimeoutMs, runAIGovernanceDecision, runAISecurityInspection } from './ai-providers';
+import { analyzeWithGemini, analyzeWithNemotron, getAIRequestTimeoutMs, runAIGovernanceDecision, runAISecurityInspection } from './ai-providers';
 
 const validAnalysis = {
   promptInjectionDetected: false,
@@ -51,19 +51,71 @@ describe('AI provider integration', () => {
     expect(options.headers['x-goog-api-key']).toBe('secret-test-key');
   });
 
-  it('fails over to Nemotron after a transient Gemini failure', async () => {
+  it('calls Nemotron through OpenRouter with the configured model and server-side key', async () => {
+    process.env.NEMOTRON_API_KEY = 'openrouter-test-key';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(validAnalysis) } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await analyzeWithNemotron(params);
+    const [url, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(options.body);
+
+    expect(result.provider).toBe('nemotron');
+    expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(options.headers.Authorization).toBe('Bearer openrouter-test-key');
+    expect(body.model).toBe('nvidia/nemotron-3-ultra-550b-a55b');
+    expect(body.messages[0].role).toBe('system');
+    expect(body.reasoning.effort).toBe('low');
+    expect(body.response_format.type).toBe('json_object');
+    expect(body.chat_template_kwargs).toBeUndefined();
+    expect(url).not.toContain('openrouter-test-key');
+  });
+
+  it('prefers Nemotron in auto mode when both providers are configured', async () => {
     process.env.GEMINI_API_KEY = 'gemini-test-key';
-    process.env.NEMOTRON_API_KEY = 'nemotron-test-key';
+    process.env.NEMOTRON_API_KEY = 'openrouter-test-key';
     process.env.AI_PROVIDER = 'auto';
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('service unavailable', { status: 503 }))
-      .mockResolvedValueOnce(new Response('service unavailable', { status: 503 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(validAnalysis) } }] }), { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(validAnalysis) } }],
+    }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await runAISecurityInspection(params);
     expect(result.provider).toBe('nemotron');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe('https://openrouter.ai/api/v1/chat/completions');
+  });
+
+  it('defaults Agent 2 to Nemotron when AI_PROVIDER is unset', async () => {
+    process.env.NEMOTRON_API_KEY = 'openrouter-test-key';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(validAnalysis) } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runAISecurityInspection(params);
+    expect(result.provider).toBe('nemotron');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('fails over to Gemini after transient Nemotron failures in auto mode', async () => {
+    process.env.GEMINI_API_KEY = 'gemini-test-key';
+    process.env.NEMOTRON_API_KEY = 'openrouter-test-key';
+    process.env.AI_PROVIDER = 'auto';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('service unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response('service unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(validAnalysis) }] } }],
+      }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runAISecurityInspection(params);
+    expect(result.provider).toBe('gemini');
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://openrouter.ai/api/v1/chat/completions');
   });
 
   it('requires live provider credentials instead of returning an offline decision', async () => {
@@ -100,6 +152,28 @@ describe('AI provider integration', () => {
     expect(result.suggestedDecision).toBe('ALLOW');
     expect(fetchMock.mock.calls[0][1].body).toContain('Amount exceeds the configured threshold');
     expect(fetchMock.mock.calls[0][1].body).toContain('make the final Allow, Verify, or Block decision yourself');
+  });
+
+  it('runs Agent 3 governance decisions through Nemotron when selected', async () => {
+    process.env.NEMOTRON_API_KEY = 'openrouter-test-key';
+    process.env.AI_PROVIDER = 'nemotron';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(validAnalysis) } }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runAIGovernanceDecision({
+      ...params,
+      activePolicies: [{ name: 'High amount review', description: 'Review payments over threshold', action: 'verify', conditions: { threshold: 10000 } }],
+      policyChecks: [{ name: 'High amount review', action: 'verify', passed: false, details: 'Amount exceeds the configured threshold', evidence: '$12,450' }],
+    });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(options.body);
+    expect(result.provider).toBe('nemotron');
+    expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(body.messages[0].content).toContain('You are Agent 3');
+    expect(body.messages[1].content).toContain('Amount exceeds the configured threshold');
   });
 
   it('rejects a live response that omits required model confidence', async () => {
