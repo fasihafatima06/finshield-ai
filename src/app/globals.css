@@ -1324,6 +1324,10 @@ button {
 .agent-checks { margin-top: 7px; padding-top: 7px; border-top: 1px solid #efedf1; }
 .agent-checks span, .extraction-notice span { color: #898492; font-size: 9px; }
 .agent-checks p { margin: 4px 0 0; color: #615b69; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.task-failure-notice { display: flex; gap: 10px; margin: 0 16px 14px; padding: 12px; border: 1px solid #f0d9d8; border-radius: 6px; background: #fffafa; color: #b44d4f; }
+.task-failure-notice > div { min-width: 0; }
+.task-failure-notice strong { display: block; font-size: 10px; }
+.task-failure-notice p { margin: 4px 0 0; color: #806e6f; font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
 .extraction-notice { grid-column: 1 / -1; display: grid; gap: 4px; padding-top: 7px; border-top: 1px solid #efedf1; }
 .extraction-notice strong { color: #615b69; font-size: 9px; font-weight: 500; overflow-wrap: anywhere; }
 .agent-raw-text { margin-top: 10px; border: 1px solid #efedf1; border-radius: 4px; background: #fdfcfd; }
@@ -1351,6 +1355,27 @@ button {
 .is-spinning svg { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.start-screen { display: flex; min-height: 100dvh; background: #f8f7f9; }
+.start-rail { display: flex; width: 260px; flex: 0 0 260px; flex-direction: column; padding: 23px 14px; background: #1e1b2e; color: #f7f5f9; }
+.start-rail-brand { display: flex; align-items: center; gap: 9px; padding: 0 7px; font-size: 14px; letter-spacing: -.03em; }
+.start-rail-brand .brand-mark { margin: 0; }
+.start-rail-brand span { color: #c5aacd; }
+.start-rail-label { margin: 48px 8px 11px; color: #8d8798; font-size: 9px; font-weight: 700; letter-spacing: .11em; }
+.start-rail-step { display: flex; align-items: center; gap: 10px; margin: 2px 0; padding: 11px 10px; border-radius: 6px; color: #aaa5b3; font-size: 11px; }
+.start-rail-step-active { background: #362f50; color: #fff; }
+.start-rail-footer { display: flex; align-items: center; gap: 7px; margin-top: auto; padding: 10px 8px; color: #a5a0ae; font-size: 9px; letter-spacing: .04em; }
+.start-rail-footer i { width: 6px; height: 6px; border-radius: 50%; background: #57a88c; }
+.start-main { display: flex; min-width: 0; flex: 1; flex-direction: column; background: radial-gradient(circle at 76% 70%, #ece4f1 0, transparent 31%), #f8f7f9; }
+.start-topbar { display: flex; height: 59px; align-items: center; justify-content: space-between; padding: 0 34px; border-bottom: 1px solid #e9e5ec; background: rgba(255,255,255,.8); color: #9794a0; font-size: 11px; }
+.start-topbar span:last-child { color: #696675; }
+.start-card { width: min(100% - 48px, 520px); margin: auto; padding: 38px; border: 1px solid #e8e2ed; border-radius: 10px; background: #fff; box-shadow: 0 16px 35px rgba(44,35,55,.08); }
+.start-mark { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 23px; border-radius: 9px; background: #f1ebf5; color: #6b4b82; }
+.start-eyebrow { margin: 0 0 9px; color: #82708f; font-size: 9px; font-weight: 700; letter-spacing: .11em; }
+.start-card h1 { margin: 0; color: #282536; font-size: clamp(31px, 5vw, 43px); font-weight: 650; letter-spacing: -.05em; line-height: 1.05; }
+.start-card > p:not(.start-eyebrow) { max-width: 420px; margin: 17px 0 27px; color: #716c78; font-size: 12px; line-height: 1.7; }
+.start-button { min-width: 118px; min-height: 39px; font-size: 11px; }
+.start-card small { display: flex; align-items: center; gap: 6px; margin-top: 24px; color: #9993a1; font-size: 9px; }
+
 @media (max-width: 1100px) {
   .workspace-content { padding-right: 23px; padding-left: 23px; }
   .sidebar { flex-basis: 220px; }
@@ -1374,6 +1399,9 @@ button {
 }
 
 @media (max-width: 640px) {
+  .start-rail { display: none; }
+  .start-topbar { height: 54px; padding: 0 17px; }
+  .start-card { width: min(100% - 32px, 520px); padding: 28px 24px; }
   .sidebar { position: fixed; left: 0; width: 248px; height: 100dvh; transform: translateX(-102%); }
   .sidebar-mobile-open { transform: translateX(0); }
   .sidebar.sidebar-collapsed { flex-basis: 248px; }

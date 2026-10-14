@@ -12,14 +12,14 @@
  */
 
 import {
-  type Task, type TaskState, type Decision, type TaskType,
+  type Task, type TaskState, type TaskType,
   type DocumentProcessingResult, type SecurityAnalysisResult, type PolicyEvaluationResult,
   type PolicyCheckResult, type FindingSeverity, type FindingCategory,
   type SandboxExecution, isValidTransition,
 } from '@/lib/types';
 import { generateCorrelationId, sleep } from '@/lib/utils';
 import * as store from '@/lib/store/demo-store';
-import { runAISecurityInspection, getActiveAIProvider, GEMINI_MODEL_ID, NEMOTRON_MODEL_ID } from '@/lib/engine/ai-providers';
+import { runAISecurityInspection, runAIGovernanceDecision } from '@/lib/engine/ai-providers';
 import { parseCsvRows } from '@/lib/engine/document-parser';
 
 const activeTaskIds = new Set<string>();
@@ -112,70 +112,12 @@ export async function processTask(taskId: string): Promise<void> {
       },
     });
 
-    // Check for mandatory security blocks
-    const hasCriticalSecurity = secResult.findings.some(
-      f => f.severity === 'critical' && f.is_confirmed
-    );
-    const hasHighPromptInjection = secResult.findings.some(
-      f => f.category === 'prompt_injection' && (f.severity === 'critical' || f.severity === 'high')
-    );
-
-    if (hasCriticalSecurity || hasHighPromptInjection) {
-      // Mandatory block — cannot be overridden by LLM
-      await transitionState(taskId, 'blocked', 'system', 'pipeline', correlationId);
-      store.updateTask(taskId, {
-        decision: 'BLOCK',
-        risk_score: secResult.riskScore,
-      });
-      
-      store.saveEvaluationResult({
-        task_id: taskId,
-        decision: 'BLOCK',
-        risk_score: secResult.riskScore,
-        model_confidence: secResult.modelConfidence,
-        policy_checks: [],
-        security_findings_count: secResult.findings.length,
-        policy_checks_passed: 0,
-        policy_checks_failed: 1,
-        policy_checks_total: 1,
-        evidence_summary: `Mandatory security block triggered: ${secResult.findings.filter(f => f.severity === 'critical' && f.is_confirmed || f.category === 'prompt_injection' && (f.severity === 'critical' || f.severity === 'high')).map(f => `${f.title} (${f.severity})`).join('; ') || 'confirmed critical threat detected'}.`,
-        explanation: hasCriticalSecurity
-          ? `BLOCK — A confirmed critical security finding triggered the mandatory security stop: ${secResult.findings.filter(f => f.severity === 'critical' && f.is_confirmed).map(f => f.title).join('; ') || 'critical threat detected'}. Risk score ${secResult.riskScore}/100. The task is stopped before policy evaluation and cannot be overridden for execution.`
-          : `BLOCK — Prompt-injection detection triggered the mandatory security stop: ${secResult.findings.filter(f => f.category === 'prompt_injection').map(f => f.title).join('; ') || 'high or critical prompt injection detected'}. Risk score ${secResult.riskScore}/100. The task is stopped before policy evaluation and cannot be overridden for execution.`,
-        requires_review: false,
-        review_reason: null,
-        policy_version: '1.0.0',
-        model_provider: null,
-        model_id: null,
-        model_version: null,
-        is_simulated: true,
-        raw_output: null,
-      });
-
-      store.addTaskEvent({
-        task_id: taskId,
-        event_type: 'decision_generated',
-        previous_state: 'security_analysis',
-        next_state: 'blocked',
-        actor: 'system',
-        service: 'pipeline',
-        correlation_id: correlationId,
-        details: { decision: 'BLOCK', reason: 'mandatory_security_block' },
-      });
-      return;
-    }
-
     // Agent 3: Policy Evaluation & Decision
     await transitionState(taskId, 'risk_analysis', 'agent-3', 'pipeline', correlationId);
     await sleep(500); // Simulate risk analysis processing
     await transitionState(taskId, 'policy_check', 'agent-3', 'pipeline', correlationId);
     
     const policyResult = await runAgent3(task, docResult, secResult, correlationId);
-
-    const { activeProvider } = getActiveAIProvider();
-    const isLiveAI = activeProvider === 'gemini' || activeProvider === 'nemotron';
-    const modelProvider = activeProvider === 'gemini' ? 'Google Gemini' : activeProvider === 'nemotron' ? 'NVIDIA Nemotron' : 'FinShield Heuristic Core';
-    const modelId = activeProvider === 'gemini' ? GEMINI_MODEL_ID : activeProvider === 'nemotron' ? NEMOTRON_MODEL_ID : 'finshield-demo-evaluator';
 
     // Save evaluation result
     const evalResult = store.saveEvaluationResult({
@@ -193,10 +135,10 @@ export async function processTask(taskId: string): Promise<void> {
       requires_review: policyResult.requiresReview,
       review_reason: policyResult.reviewReason,
       policy_version: '1.0.0',
-      model_provider: modelProvider,
-      model_id: modelId,
+      model_provider: policyResult.modelProvider,
+      model_id: policyResult.modelId,
       model_version: '1.0.0',
-      is_simulated: !isLiveAI,
+      is_simulated: false,
       raw_output: null,
     });
 
@@ -232,6 +174,9 @@ export async function processTask(taskId: string): Promise<void> {
         requiresReview: policyResult.requiresReview,
         reviewReason: policyResult.reviewReason,
         evaluationId: evalResult.id,
+        modelProvider: policyResult.modelProvider,
+        modelId: policyResult.modelId,
+        modelConfidence: policyResult.modelConfidence,
       },
     });
 
@@ -343,9 +288,7 @@ async function runAgent1(
   const submittedText = [task.title, task.instructions].filter(Boolean).join('\n');
   const extraction = documentText
     ? generateExtractionFromText(task, documentText)
-    : submittedText
-      ? generateExtractionFromText(task, submittedText)
-      : generateDemoExtraction(task);
+    : generateExtractionFromText(task, submittedText);
   const extractionMethod = documentText
     ? task.file_name?.toLowerCase().endsWith('.pdf') ? 'pdf-text-parser' : task.file_name?.toLowerCase().endsWith('.csv') ? 'csv-parser' : 'plain-text-parser'
     : submittedText ? 'task-text-parser' : task.file_type?.includes('image') ? 'ocr-tesseract' : 'text-parser';
@@ -609,12 +552,8 @@ async function runAgent3(
     correlation_id: correlationId,
   });
 
-  await sleep(500 + Math.random() * 500);
-
   const activePolicies = store.getActivePolicyRules();
   const policyChecks: PolicyCheckResult[] = [];
-  let shouldBlock = false;
-  let shouldVerify = false;
   let reviewReason: string | null = null;
 
   // Evaluate each active policy
@@ -622,34 +561,22 @@ async function runAgent3(
     const check = evaluatePolicy(policy, task, docResult, secResult);
     policyChecks.push(check);
 
-    if (!check.passed) {
-      if (policy.action === 'block') {
-        shouldBlock = true;
-      } else if (policy.action === 'verify') {
-        shouldVerify = true;
-        reviewReason = reviewReason || check.details;
-      }
-    }
   }
 
-  // Calculate final risk score (combine security + policy)
-  const policyFailCount = policyChecks.filter(c => !c.passed).length;
-  let finalRiskScore = secResult.riskScore + (policyFailCount * 10);
-  finalRiskScore = Math.min(finalRiskScore, 100);
+  const aiResult = await runAIGovernanceDecision({
+    taskType: task.type,
+    documentText: docResult.rawText,
+    instructions: task.instructions,
+    extractedFields: docResult.extractedFields as Record<string, unknown>,
+    fileName: task.file_name,
+    securityFindings: secResult.findings.map(({ category, severity, title, description, evidence }) => ({ category, severity, title, description, evidence })),
+    activePolicies: activePolicies.map(({ name, description, action, conditions }) => ({ name, description, action, conditions: conditions as Record<string, unknown> })),
+    policyChecks: policyChecks.map(({ policyName, action, passed, details, evidence }) => ({ name: policyName, action, passed, details, evidence })),
+  });
 
-  // Determine decision with strict precedence
-  let decision: Decision;
-  if (shouldBlock || finalRiskScore >= 85) {
-    decision = 'BLOCK';
-  } else if (shouldVerify || finalRiskScore >= 50) {
-    decision = 'VERIFY';
-    reviewReason = reviewReason || 'Elevated risk score requires human review';
-  } else {
-    decision = 'ALLOW';
-  }
-
-  // Generate explanation
-  const explanation = generateExplanation(decision, policyChecks, secResult, finalRiskScore);
+  const decision = aiResult.suggestedDecision;
+  if (decision === 'VERIFY') reviewReason = aiResult.explanation;
+  const explanation = aiResult.explanation;
   const evidenceSummary = generateEvidenceSummary(policyChecks, secResult);
 
   store.addTaskEvent({
@@ -662,14 +589,21 @@ async function runAgent3(
       policiesEvaluated: policyChecks.length,
       passed: policyChecks.filter(c => c.passed).length,
       failed: policyChecks.filter(c => !c.passed).length,
+      decision,
+      riskScore: aiResult.riskScore,
+      confidence: aiResult.confidence,
+      provider: aiResult.provider,
+      modelId: aiResult.modelId,
     },
   });
 
   return {
     success: true,
     decision,
-    riskScore: finalRiskScore,
-    modelConfidence: secResult.modelConfidence,
+    riskScore: aiResult.riskScore,
+    modelConfidence: aiResult.confidence,
+    modelProvider: aiResult.provider,
+    modelId: aiResult.modelId,
     policyChecks,
     explanation,
     requiresReview: decision === 'VERIFY',
@@ -807,46 +741,6 @@ function severityLevel(severity: FindingSeverity): number {
   return levels[severity] ?? 0;
 }
 
-function generateExplanation(
-  decision: Decision,
-  checks: PolicyCheckResult[],
-  secResult: SecurityAnalysisResult,
-  riskScore: number
-): string {
-  const passed = checks.filter((check) => check.passed).length;
-  const failedChecks = checks.filter((check) => !check.passed);
-  const blockRules = failedChecks.filter((check) => check.action === 'block');
-  const verifyRules = failedChecks.filter((check) => check.action === 'verify');
-  const flaggedRules = failedChecks.filter((check) => check.action === 'flag');
-  const unboundedRiskScore = secResult.riskScore + (failedChecks.length * 10);
-  const riskCalculation = `${secResult.riskScore} security risk + ${failedChecks.length} failed policy check(s) × 10 = ${unboundedRiskScore}, capped at ${riskScore}/100`;
-  const securitySummary = secResult.findings.length
-    ? `${secResult.findings.length} security finding(s): ${secResult.findings.slice(0, 3).map((finding) => `${finding.title} (${finding.severity})`).join('; ')}${secResult.findings.length > 3 ? '; additional findings recorded' : ''}.`
-    : 'No security findings were recorded.';
-  const policySummary = failedChecks.length
-    ? failedChecks.map((check) => `${check.policyName}: ${check.details} [${check.action.toUpperCase()} rule]`).join('; ')
-    : `${passed} of ${checks.length} policy checks passed.`;
-
-  switch (decision) {
-    case 'ALLOW':
-      return `ALLOW — The task may proceed because no BLOCK or VERIFY policy was triggered, all ${checks.length} policy checks passed, and the final risk score ${riskScore}/100 is below the VERIFY threshold of 50. ${securitySummary} ${riskCalculation}.`;
-    case 'BLOCK': {
-      const reason = blockRules.length
-        ? `Blocking policy triggered: ${blockRules.map((check) => `${check.policyName} — ${check.details}`).join('; ')}.`
-        : `Final risk score ${riskScore}/100 reached the automatic BLOCK threshold of 85.`;
-      return `BLOCK — Execution is prohibited. ${reason} ${policySummary} ${securitySummary} ${riskCalculation}.`;
-    }
-    case 'VERIFY': {
-      const reasons = [
-        ...verifyRules.map((check) => `${check.policyName} — ${check.details}`),
-        ...(riskScore >= 50 ? [`Final risk score ${riskScore}/100 reached the human-review threshold of 50.`] : []),
-        ...flaggedRules.map((check) => `${check.policyName} — ${check.details} (flagged for risk scoring).`),
-      ];
-      return `VERIFY — Execution is paused until an authorized reviewer decides. ${reasons.join(' ')} ${policySummary} ${securitySummary} ${riskCalculation}.`;
-    }
-  }
-}
-
 function generateEvidenceSummary(
   checks: PolicyCheckResult[],
   secResult: SecurityAnalysisResult
@@ -874,20 +768,20 @@ function generateExtractionFromText(task: Task, rawText: string) {
   const invoiceNumber = csvValue('invoice number', 'invoice no', 'invoice id', 'invoice');
   const vendorName = csvValue('vendor', 'vendor name', 'supplier', 'supplier name', 'payee');
   const csvAmount = csvValue('amount', 'total', 'invoice total', 'grand total');
-  const amountText = csvAmount || rawText.match(/(?:total|amount|grand\s+total|invoice\s+total)\s*[:=]?\s*(?:USD\s*)?\$?\s*([\d,]+(?:\.\d{1,2})?)/i)?.[1];
+  const amountText = csvAmount || rawText.match(/(?:total(?:\s+due)?|amount|grand\s+total|invoice\s+total)(?:\s*[:=]\s*|\s+)(?:USD\s*)?\$?\s*([\d,]+(?:\.\d{1,2})?)/i)?.[1];
   const amount = amountText ? Number(amountText.replace(/[^\d.-]/g, '')) : null;
   const currency = csvValue('currency')?.toUpperCase() || rawText.match(/\b(USD|EUR|GBP|CAD|AUD)\b/i)?.[1]?.toUpperCase() || (amountText?.includes('$') ? 'USD' : null);
   const fields: Partial<import('@/lib/types').ExtractedFields> = {
-    invoice_number: invoiceNumber || field(/(?:invoice\s*(?:number|no\.?|#)|invoice_number)\s*[:#=]\s*([^\r\n]+)/i),
-    vendor_name: vendorName || field(/(?:vendor(?:\s*name)?|supplier(?:\s*name)?)\s*[:=]\s*([^\r\n]+)/i),
-    vendor_id: csvValue('vendor id') || field(/vendor\s*(?:id|number)\s*[:=]\s*([^\r\n]+)/i),
-    invoice_date: csvValue('invoice date', 'date') || field(/invoice\s*date\s*[:=]\s*([^\r\n]+)/i),
-    due_date: csvValue('due date') || field(/due\s*date\s*[:=]\s*([^\r\n]+)/i),
+    invoice_number: invoiceNumber || field(/(?:invoice\s*(?:number|no\.?|#)|invoice_number)(?:\s*[:#=]\s*|\s+)([^\r\n]+)/i),
+    vendor_name: vendorName || field(/(?:vendor(?:\s*name)?|supplier(?:\s*name)?)(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
+    vendor_id: csvValue('vendor id') || field(/vendor\s*(?:id|number)(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
+    invoice_date: csvValue('invoice date', 'date') || field(/invoice\s*date(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
+    due_date: csvValue('due date') || field(/due\s*date(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
     amount: amount !== null && Number.isFinite(amount) ? amount : null,
     currency,
-    account_number: csvValue('account number', 'account no', 'account') || field(/account\s*(?:number|no\.?|#)\s*[:=]\s*([^\r\n]+)/i),
-    bank_details: csvValue('bank details', 'routing number', 'iban') || field(/(?:bank\s*details|routing\s*(?:number|no\.?)|iban)\s*[:=]\s*([^\r\n]+)/i),
-    description: csvValue('description') || field(/description\s*[:=]\s*([^\r\n]+)/i),
+    account_number: csvValue('account number', 'account no', 'account') || field(/account\s*(?:number|no\.?|#)(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
+    bank_details: csvValue('bank details', 'routing number', 'iban') || field(/(?:bank\s*details|routing\s*(?:number|no\.?)|iban)(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
+    description: csvValue('description') || field(/description(?:\s*[:=]\s*|\s+)([^\r\n]+)/i),
     requested_action: task.type,
   };
   const requiredFields: Partial<Record<TaskType, (keyof typeof fields)[]>> = {
@@ -905,96 +799,6 @@ function generateExtractionFromText(task: Task, rawText: string) {
     missingFields,
     warnings: missingFields.length ? ['Some task fields could not be extracted from the uploaded document.'] : [],
   };
-}
-
-function generateDemoExtraction(task: Task) {
-  const demoData: Record<TaskType, {
-    fields: Record<string, unknown>;
-    rawText: string;
-    confidence: Record<string, number>;
-    missingFields: string[];
-    warnings: string[];
-  }> = {
-    invoice_verification: {
-      fields: {
-        invoice_number: `INV-${2024000 + Math.floor(Math.random() * 1000)}`,
-        vendor_name: ['Acme Corp', 'TechFlow Solutions', 'DataPrime LLC', 'CloudServ Inc'][Math.floor(Math.random() * 4)],
-        vendor_id: `VND-${100 + Math.floor(Math.random() * 900)}`,
-        invoice_date: new Date(Date.now() - Math.random() * 30 * 86400000).toISOString().split('T')[0],
-        due_date: new Date(Date.now() + Math.random() * 30 * 86400000).toISOString().split('T')[0],
-        amount: Math.round((500 + Math.random() * 25000) * 100) / 100,
-        currency: 'USD',
-        description: 'Professional services and consulting',
-        requested_action: 'process_payment',
-      },
-      rawText: 'INVOICE\nInvoice Number: INV-2024XXX\nVendor: Acme Corp\nAmount: $X,XXX.XX\nDue Date: XX/XX/XXXX\nDescription: Professional services',
-      confidence: { invoice_number: 0.95, vendor_name: 0.92, amount: 0.98, date: 0.90 },
-      missingFields: [],
-      warnings: [],
-    },
-    vendor_verification: {
-      fields: {
-        vendor_name: 'TechFlow Solutions',
-        vendor_id: 'VND-201',
-        bank_details: 'XXXX-XXXX-XXXX-1234',
-        account_number: '****1234',
-        description: 'Vendor registration update',
-        requested_action: 'verify_vendor',
-      },
-      rawText: 'VENDOR UPDATE FORM\nVendor: TechFlow Solutions\nBank: XXXX-XXXX-XXXX-1234\nAccount: ****1234',
-      confidence: { vendor_name: 0.94, bank_details: 0.88, account_number: 0.91 },
-      missingFields: ['amount'],
-      warnings: [],
-    },
-    payment_preparation: {
-      fields: {
-        invoice_number: `PAY-${2024000 + Math.floor(Math.random() * 1000)}`,
-        vendor_name: 'DataPrime LLC',
-        amount: Math.round((1000 + Math.random() * 50000) * 100) / 100,
-        currency: 'USD',
-        account_number: '****5678',
-        bank_details: 'ROUTING-XXX-XXX',
-        requested_action: 'prepare_payment',
-        description: 'Monthly service payment',
-      },
-      rawText: 'PAYMENT REQUEST\nPayee: DataPrime LLC\nAmount: $XX,XXX.XX\nAccount: ****5678',
-      confidence: { vendor_name: 0.96, amount: 0.99, account_number: 0.93 },
-      missingFields: [],
-      warnings: [],
-    },
-    account_reconciliation: {
-      fields: {
-        account_number: '****9012',
-        amount: Math.round((100 + Math.random() * 5000) * 100) / 100,
-        currency: 'USD',
-        description: 'Monthly reconciliation report',
-        requested_action: 'reconcile',
-      },
-      rawText: 'RECONCILIATION REPORT\nAccount: ****9012\nPeriod: October 2024\nDiscrepancy: $XXX.XX',
-      confidence: { account_number: 0.97, amount: 0.95 },
-      missingFields: ['vendor_name', 'invoice_number'],
-      warnings: ['Reconciliation may have discrepancies'],
-    },
-    document_review: {
-      fields: {
-        description: 'General document for review',
-        requested_action: 'review',
-      },
-      rawText: 'Document content for review...',
-      confidence: {},
-      missingFields: ['vendor_name', 'amount', 'invoice_number'],
-      warnings: ['Limited fields extracted from general document'],
-    },
-  };
-
-  const data = demoData[task.type] || demoData.document_review;
-
-  // Add task-specific instructions influence
-  if (task.instructions) {
-    data.rawText += `\n\nTask Instructions: ${task.instructions}`;
-  }
-
-  return data;
 }
 
 // ─── Sandbox Execution ──────────────────────────────────────────────

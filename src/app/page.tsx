@@ -69,9 +69,10 @@ type TaskDetail = {
   convertedCsv: string | null;
 };
 type ProviderStatus = {
-  activeProvider: 'gemini' | 'nemotron' | 'demo';
+  activeProvider: 'gemini' | 'nemotron' | 'unavailable';
   hasGemini: boolean;
   hasNemotron: boolean;
+  requestTimeoutMs: number;
 };
 
 const NAVIGATION: { label: Workspace; icon: LucideIcon }[] = [
@@ -153,6 +154,7 @@ function getIconForDecision(decision: string): LucideIcon {
 }
 
 export default function Home() {
+  const [hasStarted, setHasStarted] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace>('Overview');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -199,15 +201,17 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!hasStarted) return;
     const initialLoad = window.setTimeout(() => void refresh(), 0);
     const timer = window.setInterval(() => void refresh(true), 4000);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(timer);
     };
-  }, [refresh]);
+  }, [hasStarted, refresh]);
 
   useEffect(() => {
+    if (!hasStarted) return;
     const taskId = selectedDetail?.task.id;
     if (!taskId) return;
     const timer = window.setInterval(() => {
@@ -219,7 +223,7 @@ export default function Home() {
         });
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [selectedDetail?.task.id]);
+  }, [hasStarted, selectedDetail?.task.id]);
 
   const visibleTasks = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -382,6 +386,10 @@ export default function Home() {
     setMobileNavOpen(false);
   }
 
+  if (!hasStarted) {
+    return <StartScreen onStart={() => setHasStarted(true)} />;
+  }
+
   const reviewQueue = tasks.filter((task) => task.state === 'awaiting_review');
   return (
     <div className="app-shell">
@@ -534,6 +542,34 @@ export default function Home() {
         </div>
       </main>
     </div>
+  );
+}
+
+function StartScreen({ onStart }: { onStart: () => void }) {
+  return (
+    <main className="start-screen">
+      <aside className="start-rail" aria-hidden="true">
+        <div className="start-rail-brand"><div className="brand-mark"><ShieldCheck size={19} strokeWidth={2.4} /></div><strong>finshield<span> / AI</span></strong></div>
+        <div className="start-rail-label">SECURITY GOVERNANCE</div>
+        <div className="start-rail-step start-rail-step-active"><ShieldCheck size={16} /> Secure workflow review</div>
+        <div className="start-rail-step"><FileCheck2 size={16} /> Policy-controlled actions</div>
+        <div className="start-rail-step"><UserRound size={16} /> Human approval gates</div>
+        <div className="start-rail-footer"><i /> SANDBOX ENVIRONMENT</div>
+      </aside>
+      <section className="start-main" aria-labelledby="start-title">
+        <header className="start-topbar"><span>FinShield</span><span>Banking security control</span></header>
+        <div className="start-card">
+          <div className="start-mark"><ShieldCheck size={28} strokeWidth={2.2} /></div>
+          <p className="start-eyebrow">READY TO BEGIN</p>
+          <h1 id="start-title">Secure every<br />banking workflow.</h1>
+          <p>Evaluate requests with security signals, governed AI analysis, policy checks, and human review before sandbox execution.</p>
+          <button className="button button-primary start-button" type="button" onClick={onStart}>
+            Start <ArrowRight size={16} aria-hidden="true" />
+          </button>
+          <small><LockKeyhole size={13} /> Synthetic data only · no real banking connections</small>
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -844,6 +880,10 @@ function TaskDetailPanel({
   const agentThreeStarted = events.some((event) => event.event_type === 'policy_check_started');
   const agentStatus = (complete: boolean, started: boolean) => complete ? 'Completed' : started ? task.state === 'failed' ? 'Failed' : 'Working' : 'Waiting';
   const agentTwoResult = [...events].reverse().find((event) => event.event_type === 'security_findings_recorded');
+  const agentTwoAIResult = [...events].reverse().find((event) =>
+    event.event_type === 'security_findings_recorded' && typeof event.details?.aiProvider === 'string'
+  );
+  const agentThreeResult = [...events].reverse().find((event) => event.event_type === 'policy_check_completed');
   const agentTwoRisk = agentTwoResult?.details?.riskScore;
   const agentTwoChecks = agentTwoResult?.details?.checksPerformed;
   const extractedFieldCount = extractedFields
@@ -890,6 +930,7 @@ function TaskDetailPanel({
         <div><span>Business reference</span><strong>{task.reference_id || 'Not provided'}</strong></div>
         <div className="submission-instructions"><span>Task instructions</span><p>{task.instructions || 'No additional instructions were provided.'}</p></div>
       </div>
+      {task.state === 'failed' && task.error_message && <div className="task-failure-notice" role="alert"><AlertTriangle size={16} /><div><strong>Processing stopped</strong><p>{task.error_message}</p></div></div>}
       <section className="agent-workflow">
         <div className="section-title"><Activity size={16} /><h3>Three-agent workflow</h3></div>
         <div className="agent-workflow-grid">
@@ -901,17 +942,17 @@ function TaskDetailPanel({
           <article className="agent-step">
             <div><span>AGENT 2 · SECURITY</span><strong className={agentStatus(agentTwoComplete, agentTwoStarted) === 'Completed' ? 'agent-done' : ''}>{agentStatus(agentTwoComplete, agentTwoStarted)}</strong></div>
             <p>Scanned document text and instructions for prompt injection, suspicious content, amount anomalies, and missing information. Findings and risk are sent to Agent 3.</p>
-            <small>{agentTwoComplete ? `${securityFindings.length} finding(s) · risk ${typeof agentTwoRisk === 'number' ? `${agentTwoRisk}/100` : 'recorded'} · ${Array.isArray(agentTwoChecks) ? agentTwoChecks.length : 'security'} checks` : 'Waiting for document processing.'}</small>
+            <small>{agentTwoComplete ? `${securityFindings.length} finding(s) · risk ${typeof agentTwoRisk === 'number' ? `${agentTwoRisk}/100` : 'recorded'} · ${Array.isArray(agentTwoChecks) ? agentTwoChecks.length : 'security'} checks${agentTwoAIResult ? ` · ${String(agentTwoAIResult.details?.aiProvider)} / ${String(agentTwoAIResult.details?.aiModel)}` : ''}` : 'Waiting for document processing.'}</small>
             {agentTwoComplete && Array.isArray(agentTwoChecks) && agentTwoChecks.length > 0 && <div className="agent-checks"><span>Checks performed</span><p>{agentTwoChecks.filter((check): check is string => typeof check === 'string').map(humanize).join(' · ')}</p></div>}
           </article>
           <article className="agent-step">
             <div><span>AGENT 3 · POLICY & DECISION</span><strong className={agentStatus(agentThreeComplete, agentThreeStarted) === 'Completed' ? 'agent-done' : ''}>{agentStatus(agentThreeComplete, agentThreeStarted)}</strong></div>
-            <p>Applied active policy rules to Agent 1’s extracted data and Agent 2’s findings, then produced the final Allow, Verify, or Block decision.</p>
-            <small>{evaluationResult ? `${evaluationResult.decision} · ${evaluationResult.policy_checks_passed}/${evaluationResult.policy_checks_total} checks passed · confidence ${evaluationResult.model_confidence === null ? 'not reported' : `${Math.round(evaluationResult.model_confidence * 100)}% (model-reported, uncalibrated)`}` : 'Waiting for security analysis.'}</small>
+            <p>Sent Agent 1’s extracted data, Agent 2’s findings, and active policy evidence to a live model, which makes the final Allow, Verify, or Block decision.</p>
+            <small>{evaluationResult ? `${evaluationResult.decision} · ${evaluationResult.model_provider} / ${evaluationResult.model_id} · confidence ${evaluationResult.model_confidence === null ? 'not reported' : `${Math.round(evaluationResult.model_confidence * 100)}% (model-reported, uncalibrated)`}` : agentThreeResult ? `${String(agentThreeResult.details?.provider)} / ${String(agentThreeResult.details?.modelId)} · decision call completed` : 'Waiting for security analysis.'}</small>
           </article>
         </div>
       </section>
-      {evaluationResult && <div className="evaluation-explanation"><ShieldCheck size={16} /><div><strong>Decision rationale</strong><p>{evaluationResult.explanation}</p><span>{evaluationResult.policy_checks_passed}/{evaluationResult.policy_checks_total} policy checks passed · policy {evaluationResult.policy_version}{evaluationResult.is_simulated ? ' · simulated' : ''}</span></div></div>}
+      {evaluationResult && <div className="evaluation-explanation"><ShieldCheck size={16} /><div><strong>Live AI decision rationale · {evaluationResult.model_provider} / {evaluationResult.model_id}</strong><p>{evaluationResult.explanation}</p><span>{evaluationResult.policy_checks_passed}/{evaluationResult.policy_checks_total} local policy checks passed · provided to the model as evidence · confidence is self-reported and uncalibrated</span></div></div>}
       {convertedCsv && <div className="converted-csv"><div><strong>Converted CSV is ready</strong><span>Generated from the uploaded document for review and download.</span></div><button className="button button-secondary button-small" onClick={downloadConvertedCsv}><FileDown size={14} /> Download CSV</button></div>}
 
       <div className="detail-grid">
@@ -1045,13 +1086,13 @@ function SettingsWorkspace({
   return (
     <div className="settings-layout">
       <section className="panel settings-panel">
-        <div className="panel-heading"><div><h2>AI providers</h2><p>Exactly two provider keys, loaded privately by the server.</p></div><div className="provider-badge"><span className={providerStatus?.activeProvider === 'demo' ? 'provider-dot provider-demo' : 'provider-dot'} />{providerStatus?.activeProvider === 'demo' ? 'OFFLINE DEMO' : 'LIVE PROVIDER'}</div></div>
-        <div className="provider-active"><div className="provider-active-icon"><AudioLines size={18} /></div><div><span>Active analysis mode</span><strong>{providerStatus ? (providerStatus.activeProvider === 'demo' ? 'Offline deterministic demo' : providerStatus.activeProvider === 'gemini' ? 'Google Gemini' : 'NVIDIA Nemotron 3 Ultra') : 'Loading provider status…'}</strong></div></div>
+        <div className="panel-heading"><div><h2>AI providers</h2><p>Exactly two provider keys, loaded privately by the server.</p></div><div className="provider-badge"><span className={providerStatus?.activeProvider === 'unavailable' ? 'provider-dot provider-demo' : 'provider-dot'} />{providerStatus?.activeProvider === 'unavailable' ? 'CONFIGURATION REQUIRED' : 'LIVE AI REQUIRED'}</div></div>
+        <div className="provider-active"><div className="provider-active-icon"><AudioLines size={18} /></div><div><span>Selected provider (connection must be tested)</span><strong>{providerStatus ? (providerStatus.activeProvider === 'unavailable' ? 'No live provider configured' : providerStatus.activeProvider === 'gemini' ? 'Google Gemini' : 'NVIDIA Nemotron 3 Ultra') : 'Loading provider status…'}</strong></div></div>
         <div className="provider-list">
           <ProviderRow name="Google Gemini" identifier="GEMINI_API_KEY" model="gemini-3.1-pro-preview" configured={providerStatus?.hasGemini || false} loading={isTestingProvider} onTest={() => onTestProvider('gemini')} />
           <ProviderRow name="NVIDIA Nemotron 3 Ultra" identifier="NEMOTRON_API_KEY" model="nvidia/nemotron-3-ultra-550b-a55b" configured={providerStatus?.hasNemotron || false} loading={isTestingProvider} onTest={() => onTestProvider('nemotron')} />
         </div>
-        <div className="inline-notice"><LockKeyhole size={14} /> Configure only the Gemini and Nemotron keys in <code>.env.local</code>, then restart the server. Never use a <code>NEXT_PUBLIC_</code> prefix for secrets.</div>
+        <div className="inline-notice"><LockKeyhole size={14} /> Configure only the Gemini and Nemotron keys in <code>.env.local</code>, then restart the server. Key presence does not confirm valid credentials or quota; use Test connection. Never use a <code>NEXT_PUBLIC_</code> prefix for secrets.</div>
       </section>
       <section className="panel settings-panel">
         <div className="panel-heading"><div><h2>Policy configuration</h2><p>Toggle demo rules. Each update applies to subsequent evaluations.</p></div><span className="queue-count">{policies.length}</span></div>
@@ -1063,7 +1104,7 @@ function SettingsWorkspace({
 }
 
 function ProviderRow({ name, identifier, model, configured, loading, onTest }: { name: string; identifier: string; model: string; configured: boolean; loading: boolean; onTest: () => void }) {
-  return <div className="provider-row"><div className="provider-logo"><Sparkles size={16} /></div><div className="provider-copy"><strong>{name}</strong><span>{identifier} · {configured ? 'Key configured' : 'Not configured'}</span><small>Model: {model}</small></div><span className={`provider-state ${configured ? 'configured' : ''}`}><i />{configured ? 'Ready' : 'Offline'}</span><button className="button button-small button-secondary" disabled={!configured || loading} onClick={onTest}>{loading ? <LoaderCircle size={14} className="spin" /> : <Activity size={14} />}Test connection</button></div>;
+  return <div className="provider-row"><div className="provider-logo"><Sparkles size={16} /></div><div className="provider-copy"><strong>{name}</strong><span>{identifier} · {configured ? 'Key configured' : 'Not configured'}</span><small>Model: {model}</small></div><span className={`provider-state ${configured ? 'configured' : ''}`}><i />{configured ? 'Configured' : 'Missing'}</span><button className="button button-small button-secondary" disabled={!configured || loading} onClick={onTest}>{loading ? <LoaderCircle size={14} className="spin" /> : <Activity size={14} />}Test connection</button></div>;
 }
 
 function EmptyState({ icon: Icon, title, description, action }: { icon: LucideIcon; title: string; description: string; action?: React.ReactNode }) {

@@ -396,6 +396,8 @@ export interface PolicyEvaluationResult {
   decision: Decision;
   riskScore: number;
   modelConfidence: number | null;
+  modelProvider: string;
+  modelId: string;
   policyChecks: PolicyCheckResult[];
   explanation: string;
   requiresReview: boolean;

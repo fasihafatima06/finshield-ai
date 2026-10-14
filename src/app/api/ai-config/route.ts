@@ -10,6 +10,7 @@ export async function GET() {
         activeProvider: config.activeProvider,
         hasGemini: config.hasGemini,
         hasNemotron: config.hasNemotron,
+        requestTimeoutMs: config.requestTimeoutMs,
         availableProviders: [
           {
             id: 'gemini',
@@ -24,13 +25,6 @@ export async function GET() {
             description: 'Server-configured NVIDIA provider',
             isConfigured: config.hasNemotron,
             docsUrl: 'https://build.nvidia.com/',
-          },
-          {
-            id: 'demo',
-            name: 'Offline Security Heuristics Core (Demo)',
-            description: 'Deterministic rule engine for prompt injection & banking policy evaluation',
-            isConfigured: true,
-            docsUrl: null,
           },
         ],
       },
@@ -65,7 +59,7 @@ export async function POST(request: NextRequest) {
     const selectedProvider = provider as 'gemini' | 'nemotron';
     const key = selectedProvider === 'gemini'
       ? process.env.GEMINI_API_KEY?.trim()
-      : process.env.NVIDIA_API_KEY?.trim() || process.env.NEMOTRON_API_KEY?.trim();
+      : process.env.NEMOTRON_API_KEY?.trim();
 
     if (!key) {
       return NextResponse.json(
