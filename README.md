@@ -54,4 +54,4 @@ npm run build
 npm start
 ```
 
-There is not yet a test suite or production database integration configured in this prototype. Do not use real banking, customer, account, or payment data.
+Automated tests are available with `npm test`, but they cover selected code paths and do not replace end-to-end or deployment security testing. This prototype has no production database integration. Do not use real banking, customer, account, or payment data.
